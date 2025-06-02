@@ -1,6 +1,7 @@
-import numpy as np
-import Functions as F
+import cupy as np
 import copy
+
+from . import Functions as F
 
 class RBM:
     def __init__(
@@ -12,27 +13,37 @@ class RBM:
             spin_low        : float = 0,
             spin_high       : float = 1,
             num_of_states   : float = 2,
-            seed            : int   = None
+            seed            : int   = None,
+            dtype           : type  = np.float32,
+            weight_factor   : float = 1.0
             ):
         
         self.vs = visible_size
         self.hs = hidden_size 
-
         self.beta = inverse_temp
-
         self.k = k
 
+        self.dtype = dtype
+        self.__float_max = np.finfo(dtype).max
+
         # v^T @ W @ h + v^T @ θv + θh @ h
-        rs = np.random.RandomState(seed)
-        self.Weight = rs.normal(size = (self.vs, self.hs))
-        self.bias_v = rs.normal(size = self.vs)
-        self.bias_h = rs.normal(size = self.hs)
+        self.__rs = np.random.RandomState(seed)
+        self.Weight = self.__rs.uniform(
+            low   = - 0.1 * np.sqrt(6. / (self.vs + self.hs)),
+            high  =   0.1 * np.sqrt(6. / (self.vs + self.hs)),
+            size  = (self.vs, self.hs), 
+            dtype = self.dtype
+            ) * weight_factor
+        self.bias_v = np.zeros(self.vs, dtype = self.dtype)
+        self.bias_h = np.zeros(self.hs, dtype = self.dtype)
 
         #All states of a spin
-        self.spin_low         = spin_low
-        self.spin_high        = spin_high
-        self.num_of_states    = num_of_states
-        self.__all_states = np.linspace(start = spin_low, stop = spin_high, num = num_of_states)
+        self.spin_low      = spin_low
+        self.spin_high     = spin_high
+        self.num_of_states = num_of_states
+        self.__all_states  = np.linspace(start = spin_low, stop = spin_high, num = num_of_states, dtype = self.dtype)
+
+        
     
     def internal_energy(self, v : np.ndarray, h : np.ndarray):
         E = - v @ self.Weight @ h + v @ self.bias_v + h @ self.bias_h
@@ -52,8 +63,15 @@ class RBM:
             array       = self.bias_h.reshape((1, self.hs)), 
             pad_width   = ((0, batch_size - 1), (0, 0)) 
             )
-        _effective_field = np.log(1 + np.exp(np.einsum("bi,ij->bj", v, self.Weight) + _bias_h_padded))
-        effective_field_term = np.sum(_effective_field, axis = 1)
+        
+        _log = np.einsum("bi,ij->bj", v, self.Weight) - _bias_h_padded
+        _log_max = np.max(_log)
+
+        if (_log_max < np.log(self.__float_max) * 0.8):
+            _effective_field = np.log(1 / np.exp(_log_max) + np.exp(_log - _log_max)) + _log_max
+        else:
+            _effective_field = _log
+        effective_field_term = np.sum(_effective_field, axis = 1, dtype = self.dtype)
 
         f = - self.beta * (external_field_term + effective_field_term)
 
@@ -65,11 +83,12 @@ class RBM:
         
         states = np.concatenate(
             [self.__all_states for _ in range(batch_size * size)],
-            axis = 0
+            axis  = 0,
+            dtype = self.dtype
             )
         states = states.reshape((batch_size, size, self.num_of_states))
 
-        state = F.get_most_likely_state(states, probabilities)
+        state = F.get_most_likely_state(states, probabilities, self.__rs)
 
         return state
 
@@ -78,8 +97,9 @@ class RBM:
         A = self.beta * (np.einsum("bi,ij->bj", v, self.Weight) - self.bias_h)
 
         p_h_under_given_v = F.softmax(
-            x    = np.einsum("bj,k->bjk", A, self.__all_states), 
-            axis = 2
+            x     = np.einsum("bj,k->bjk", A, self.__all_states), 
+            axis  = 2, 
+            dtype = self.dtype
             )
 
         h = self.__get_most_likely_state(p_h_under_given_v)
@@ -90,8 +110,9 @@ class RBM:
         A = self.beta * (np.einsum("ij,bj->bi", self.Weight, h) - self.bias_v)
         
         p_v_under_given_h = F.softmax(
-            x    = np.einsum("bi,k->bik", A, self.__all_states), 
-            axis = 2
+            x     = np.einsum("bi,k->bik", A, self.__all_states), 
+            axis  = 2, 
+            dtype = self.dtype
             )
         
         v = self.__get_most_likely_state(p_v_under_given_h)

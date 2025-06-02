@@ -1,9 +1,11 @@
 import time
 
-import numpy as np
-from Restricted_Boltzmann_Machine import RBM
+import cupy as np
 from functools import reduce
 from operator import __mul__
+
+from .Restricted_Boltzmann_Machine import RBM
+
 
 class RBM_training:
     def __init__(
@@ -29,11 +31,11 @@ class RBM_training:
         self.testing_samples    = testing_samples      
         self.num_test_samples   = testing_samples.shape[0]
 
-        self.loss                 = []
-        self.training_accuracy       = []
-        self.validation_accuracy  = []
-        self.testing_accuracy        = []
-        self.free_energy          = []
+        self.loss                = []
+        self.training_accuracy   = []
+        self.validation_accuracy = []
+        self.testing_accuracy    = []
+        self.free_energy         = []
 
         self.__flatten_shape  = reduce(__mul__, training_samples.shape[1:])
         self.__original_shape = training_samples.shape[1:]
@@ -48,15 +50,15 @@ class RBM_training:
 
         return acc
 
-    def start_training(self):
+    def start_training(self, print_interval : int = 20):
         
+        t_start = time.time()
         for i in range(self.epochs):
             loss                = []
             training_accuracy   = []
             validation_accuracy = []
             free_energy         = []
 
-            t_start = time.time()
             for i_batch in range(self.num_train_samples // self.batch_size):
                 
                 #Slice training data
@@ -70,7 +72,7 @@ class RBM_training:
                 loss.append(free_energy_data - free_energy_model)
                 free_energy.append(free_energy_model)
                 #Calculate training accuracy
-                training_accuracy.append(self.__accuracy(v_model, v_model))
+                training_accuracy.append(self.__accuracy(v_data, v_model))
 
                 #Slice validation data
                 start = i_batch * self.batch_size % self.num_validation
@@ -97,13 +99,11 @@ class RBM_training:
                 test_data_slice = slice(i_batch * self.batch_size, (i_batch + 1) * self.batch_size)
                 v_test = self.testing_samples[test_data_slice]
                 v_test = np.reshape(v_test, (v_test.shape[0], self.__flatten_shape))
-
                 #Forward
                 v_test_model, _, _ = self.rbm.forward(v_test)
 
                 testing_accuracy.append(self.__accuracy(v_test, v_test_model))
 
-            t_finish = time.time()
 
             self.loss.append(np.average(loss))
             self.training_accuracy.append(np.average(training_accuracy))
@@ -111,12 +111,14 @@ class RBM_training:
             self.free_energy.append(np.average(free_energy_model))
             self.testing_accuracy.append(np.average(testing_accuracy))
 
-            
-            print(f"{i}-th epoch finished. "
-                  + f"Time= {t_finish - t_start:.2e} s. "
-                  + f"Loss= {self.loss[i]:.4e} , "
-                  + f"Train_acc= {self.training_accuracy[i]:.4e} , "
-                  + f"Vali_acc= {self.validation_accuracy[i]:.4e} , "
-                  + f"Test_acc= {self.testing_accuracy[i]:.4e} , "
-                  + f"Free_en= {self.free_energy[i]:.4e}"
-                  )
+            if i % print_interval == print_interval - 1:
+                t_finish = time.time()
+                print(f"{i+1}-th epoch finished. "
+                      + f"Time= {t_finish - t_start:.2e} s. "
+                      + f"Loss= {self.loss[i]:.4e} , "
+                      + f"Train_acc= {self.training_accuracy[i]:.4e} , "
+                      + f"Vali_acc= {self.validation_accuracy[i]:.4e} , "
+                      + f"Test_acc= {self.testing_accuracy[i]:.4e} , "
+                      + f"Free_en= {self.free_energy[i]:.4e}"
+                      )
+                t_start = time.time()

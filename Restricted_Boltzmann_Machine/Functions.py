@@ -1,9 +1,10 @@
-import numpy as np
+import cupy as np
+from itertools import product
 
-def softmax(x : np.ndarray, axis : int = 0):
+def softmax(x : np.ndarray, axis : int = 0, dtype : type = np.float32):
     _x = x - max_values(x, axis = -1)
     expx = np.exp(_x)
-    sf = expx / np.sum(expx, axis = axis, keepdims = True)
+    sf = expx / np.sum(expx, axis = axis, keepdims = True, dtype = dtype)
     return sf
 
 def max_values(a : np.ndarray, axis : int):
@@ -46,11 +47,11 @@ def argmax_mask(a : np.ndarray, axis : int):
 
     maxval = max_values(a, axis)
 
-    mask = (np.abs(a - maxval) < 1e-12)
+    mask = (np.abs((a - maxval) / maxval) < 1e-13)
 
     return mask
 
-def get_most_likely_state(states : np.ndarray, probabilities : np.ndarray):
+def get_most_likely_state(states : np.ndarray, probabilities : np.ndarray, rs : np.random.RandomState):
     """
     For a given states and correspond probabilities with a size of states.shape[-1] == probabilities.shape[-1] == num_of_states, and select the most likely states.
     `states` and `probabilities` must have the same shape.
@@ -77,15 +78,43 @@ def get_most_likely_state(states : np.ndarray, probabilities : np.ndarray):
     >>> [[2, 1, 3], [0, 3, 3]]
     """
 
+    #Calulate mask
     mask  = argmax_mask(probabilities, -1)
+
+    #Force the mask of state to be one-hot
+    shape = states.shape
+    count_true = mask[mask].size
+    if count_true != shape[0] * shape[1]:
+        duplicate_list = []
+        for i in range(shape[2]):
+            for j in range(i + 1, shape[2]):
+                location_coli_eq_colj = np.where(mask[:,:,i] == mask[:,:,j])
+                if location_coli_eq_colj[0].size != 0:
+                    duplicate_list.append([i,j])
+        
+        for i, j in duplicate_list:
+            for k, l in zip(*np.where(mask[:,:,i] == mask[:,:,j])):
+                randIdx = rs.randint(0, shape[2])
+                state_mask = np.full(shape = shape[2], fill_value = False, dtype = bool)
+                state_mask[randIdx] = True
+                mask[k, l] = state_mask
+
+
     state = states[mask]
-    
+
     merge_dim = []
     for dim in range(states.ndim):
         if dim < (states.ndim - 1):
             merge_dim.append(states.shape[dim])
 
-    state = state.reshape(tuple(merge_dim))
+    try:
+        state = state.reshape(tuple(merge_dim))
+    except:
+        mask0 = mask[:,:,0]
+        mask1 = mask[:,:,1]
+        print(mask[mask].size)
+        for i,j in zip(*np.where(mask0 == mask1)):
+            print(probabilities[i,j], mask[i,j])
 
     return state
 
