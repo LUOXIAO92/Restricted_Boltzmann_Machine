@@ -46,11 +46,9 @@ class RBM:
         
     
     def internal_energy(self, v : np.ndarray, h : np.ndarray):
-        E = - v @ self.Weight @ h + v @ self.bias_v + h @ self.bias_h
         E = - np.einsum("bi,ij,bj->b", v, self.Weight, h)   \
             + np.einsum("bi,i->b", v, self.bias_v)          \
             + np.einsum("j,bj->b", self.bias_h, h)
-        #Return average 
         return np.average(E)
     
     
