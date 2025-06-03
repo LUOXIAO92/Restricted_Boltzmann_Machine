@@ -33,8 +33,7 @@ class RBM:
             low   = - 0.1 * np.sqrt(6. / (self.vs + self.hs)),
             high  =   0.1 * np.sqrt(6. / (self.vs + self.hs)),
             size  = (self.vs, self.hs), 
-            ) * weight_factor
-        self.Weight = np.asarray(self.Weight, dtype = self.dtype)
+            ).astype(self.dtype) * weight_factor
         self.bias_v = np.zeros(self.vs, dtype = self.dtype)
         self.bias_h = np.zeros(self.hs, dtype = self.dtype)
 
