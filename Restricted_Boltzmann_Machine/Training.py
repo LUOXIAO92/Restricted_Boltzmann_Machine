@@ -95,13 +95,12 @@ class RBM_training:
 
             #Test
             testing_accuracy = []
-            for i_batch in range(self.num_test_samples // self.batch_size):
+            for i_batch in range(self.num_test_samples // min(self.num_test_samples, self.batch_size)):
                 test_data_slice = slice(i_batch * self.batch_size, (i_batch + 1) * self.batch_size)
                 v_test = self.testing_samples[test_data_slice]
                 v_test = np.reshape(v_test, (v_test.shape[0], self.__flatten_shape))
                 #Forward
                 v_test_model, _, _ = self.rbm.forward(v_test)
-
                 testing_accuracy.append(self.__accuracy(v_test, v_test_model))
 
 

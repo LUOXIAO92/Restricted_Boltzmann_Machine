@@ -101,20 +101,12 @@ def get_most_likely_state(states : np.ndarray, probabilities : np.ndarray, rs : 
 
 
     state = states[mask]
-
     merge_dim = []
     for dim in range(states.ndim):
         if dim < (states.ndim - 1):
             merge_dim.append(states.shape[dim])
 
-    try:
-        state = state.reshape(tuple(merge_dim))
-    except:
-        mask0 = mask[:,:,0]
-        mask1 = mask[:,:,1]
-        print(mask[mask].size)
-        for i,j in zip(*np.where(mask0 == mask1)):
-            print(probabilities[i,j], mask[i,j])
-
+    state = state.reshape(tuple(merge_dim))
+    
     return state
 
