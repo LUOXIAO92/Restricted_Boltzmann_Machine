@@ -65,8 +65,8 @@ class RBM:
     
     def internal_energy(self, v : np.ndarray, h : np.ndarray):
         E = - oe.contract("bi,ij,bj->b", v, self.Weight, h)   \
-            + oe.contract("bi,i->b", v, self.bias_v)          \
-            + oe.contract("j,bj->b", self.bias_h, h)
+            - oe.contract("bi,i->b", v, self.bias_v)          \
+            - oe.contract("j,bj->b", self.bias_h, h)
         return np.average(E)
     
     
@@ -89,7 +89,7 @@ class RBM:
             _effective_field = _log
         effective_field_term = np.sum(_effective_field, axis = 1, dtype = self.dtype)
 
-        f = external_field_term - effective_field_term
+        f = - external_field_term - effective_field_term
 
         return np.average(f)
     
@@ -106,7 +106,7 @@ class RBM:
 
     def __visible_to_hidden(self, v : np.ndarray):
 
-        A = self.beta * (oe.contract("bi,ij->bj", v, self.Weight) - self.bias_h)
+        A = self.beta * (oe.contract("bi,ij->bj", v, self.Weight) + self.bias_h)
 
         p_h_under_given_v = F.softmax(
             x     = oe.contract("bj,k->bjk", A, self.__all_states), 
@@ -119,7 +119,7 @@ class RBM:
         return h
     
     def __hidden_to_visible(self, h : np.ndarray):
-        A = self.beta * (oe.contract("ij,bj->bi", self.Weight, h) - self.bias_v)
+        A = self.beta * (oe.contract("ij,bj->bi", self.Weight, h) + self.bias_v)
         
         p_v_under_given_h = F.softmax(
             x     = oe.contract("bi,k->bik", A, self.__all_states), 
@@ -169,6 +169,6 @@ class RBM:
         dbias_v = v_data - v_model
         dbias_h = h_data - h_model
         self.Weight += learning_rate * dw / batch_size
-        self.bias_v -= learning_rate * np.average(dbias_v, axis = 0)
-        self.bias_h -= learning_rate * np.average(dbias_h, axis = 0)
+        self.bias_v += learning_rate * np.average(dbias_v, axis = 0)
+        self.bias_h += learning_rate * np.average(dbias_h, axis = 0)
 
