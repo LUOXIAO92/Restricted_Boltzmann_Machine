@@ -1,5 +1,5 @@
-import cupy as np
 import copy
+import numpy as np
 import opt_einsum as oe
 
 from . import Functions as F
@@ -11,9 +11,6 @@ class RBM:
             hidden_size     : int, 
             inverse_temp    : float = 1,
             k               : int   = 1,
-            spin_low        : float = 0,
-            spin_high       : float = 1,
-            num_of_states   : float = 2,
             seed            : int   = None,
             dtype           : type  = np.float32,
             weight_factor   : float = 1.0
@@ -28,8 +25,9 @@ class RBM:
         self.__float_max = np.finfo(dtype).max
 
         # v^T @ W @ h + v^T @ θv + θh @ h
-        self.__rs = np.random.RandomState(seed)
-        self.Weight = self.__rs.uniform(
+        #self.__rs = np.random.RandomState(seed)
+        np.random.seed(seed)
+        self.Weight = np.random.uniform(
             low   = - 0.1 * np.sqrt(6. / (self.vs + self.hs)),
             high  =   0.1 * np.sqrt(6. / (self.vs + self.hs)),
             size  = (self.vs, self.hs), 
@@ -37,41 +35,22 @@ class RBM:
         self.bias_v = np.zeros(self.vs, dtype = self.dtype)
         self.bias_h = np.zeros(self.hs, dtype = self.dtype)
 
-        #All states of a spin
-        self.spin_low      = spin_low
-        self.spin_high     = spin_high
-        self.num_of_states = num_of_states
-        self.__all_states  = np.linspace(start = spin_low, stop = spin_high, num = num_of_states, dtype = self.dtype)
+    def pseudo_likelihood(self, v):
+        ind = (np.arange(v.shape[0]), np.random.randint(0, v.shape[1], v.shape[0]))
+        v_noise = copy.deepcopy(v)
+        v_noise[ind] = 1 - v_noise[ind]
+        f_model = self.free_energy(v)
+        f_noise = self.free_energy(v_noise)
 
-        
-        #Cache for all states
-        self.__states : dict | None = None
-            
-    def __set_states_cache(self, batch_size : int):
-        if self.__states is None:
-            self.__states = {}
-            self.__states["v2h"] = np.concatenate(
-                [self.__all_states for _ in range(batch_size * self.hs)],
-                axis  = 0,
-                dtype = self.dtype
-                ).reshape((batch_size, self.hs, self.num_of_states))
-            
-            self.__states["h2v"] = np.concatenate(
-                [self.__all_states for _ in range(batch_size * self.vs)],
-                axis  = 0,
-                dtype = self.dtype
-                ).reshape((batch_size, self.vs, self.num_of_states))
-            
-    
-    def internal_energy(self, v : np.ndarray, h : np.ndarray):
-        E = - oe.contract("bi,ij,bj->b", v, self.Weight, h)   \
-            - oe.contract("bi,i->b", v, self.bias_v)          \
-            - oe.contract("j,bj->b", self.bias_h, h)
-        return np.average(E)
-    
-    
+        #pseudo_likelihood = -np.log(1 + np.exp(-(f_model - f_noise)))
+        return -np.logaddexp(0, -(f_model - f_noise))
+
     def free_energy(self, v : np.ndarray):
-        
+        """
+        Return
+        ------
+        Free energy for each batch.
+        """
         external_field_term = oe.contract("bi,i->b", v, self.bias_v)
 
         batch_size, _ = v.shape
@@ -93,43 +72,20 @@ class RBM:
 
         return np.average(f)
     
-    def __get_most_likely_state(self, probabilities : np.ndarray, dowhat : str):
-
-        batch_size = probabilities.shape[0]
-        state = F.get_most_likely_state(
-            states        = self.__states[dowhat][:batch_size], 
-            probabilities = probabilities, 
-            rs            = self.__rs
-            )
-
-        return state
 
     def __visible_to_hidden(self, v : np.ndarray):
-
-        A = self.beta * (oe.contract("bi,ij->bj", v, self.Weight) + self.bias_h)
-
-        p_h_under_given_v = F.softmax(
-            x     = oe.contract("bj,k->bjk", A, self.__all_states), 
-            axis  = 2, 
-            dtype = self.dtype
-            )
-
-        h = self.__get_most_likely_state(p_h_under_given_v, "v2h")
-
-        return h
+        p_hv = F.sigmoid(
+            self.beta * (oe.contract("bi,ij->bj", v, self.Weight) + self.bias_h)
+        )
+        h = F.binormal_distribution(p_hv)
+        return h, p_hv
     
     def __hidden_to_visible(self, h : np.ndarray):
-        A = self.beta * (oe.contract("ij,bj->bi", self.Weight, h) + self.bias_v)
-        
-        p_v_under_given_h = F.softmax(
-            x     = oe.contract("bi,k->bik", A, self.__all_states), 
-            axis  = 2, 
-            dtype = self.dtype
-            )
-
-        v = self.__get_most_likely_state(p_v_under_given_h, "h2v")
-
-        return v
+        p_vh = F.sigmoid(
+            self.beta * (oe.contract("ij,bj->bi", self.Weight, h) + self.bias_v)
+        )
+        v = F.binormal_distribution(p_vh)
+        return v, p_vh
     
     def forward(self, v : np.ndarray):
         """
@@ -140,34 +96,40 @@ class RBM:
 
         Retrun
         ------
-        `v_model`, `h_model`, `h_data`
+        `v_model`, `h_model`, `h_data`, `p_hv_model`, `p_vh_model`, `p_hv_data`
         """
 
-        self.__set_states_cache(v.shape[0])
-
-        h_data  = self.__visible_to_hidden(v)
+        h_data,  p_hv_data = self.__visible_to_hidden(v)
         h_model = copy.deepcopy(h_data)
         for _ in range(self.k):
-            v_model = self.__hidden_to_visible(h_model)
-            h_model = self.__visible_to_hidden(v_model)
+            v_model, p_vh_model = self.__hidden_to_visible(h_model)
+            h_model, p_hv_model = self.__visible_to_hidden(v_model)
         
-        return v_model, h_model, h_data
+        return v_model, h_model, h_data, p_hv_model, p_vh_model, p_hv_data
     
     def backward(
             self, 
             v_data          : np.ndarray, 
             h_data          : np.ndarray, 
-            v_model         : np.ndarray, 
-            h_model         : np.ndarray,
-            learning_rate   : float = 0.001
+            v_model         : np.ndarray | None = None, 
+            h_model         : np.ndarray | None = None,
+            p_hv_data       : np.ndarray | None = None,
+            p_hv_model      : np.ndarray | None = None,
+            learning_rate   : float             = 0.001,
+            algorithm       : str               = "CD"
         ):
 
         batch_size, _ = v_data.shape
         #Do the same calculation as folling: 
-        #dw_{bij} = v_{bi}⊗h_{bj} - v'_{bi}⊗h'_{bj}, then calculate dw_{ij} = 1 / batchsize * sum_b dw_{bij} 
-        dw = oe.contract("bi,bj->ij", v_data, h_data) - oe.contract("bi,bj->ij", v_model, h_model)
+        #dw_{bij} = <v_{bi}⊗h_{bj}>_data - <v'_{bi}⊗h'_{bj}>_model, then calculate dw_{ij} = 1 / batchsize * sum_b dw_{bij} 
+        if algorithm == "CD":
+            dw = oe.contract("bi,bj->ij", v_data, p_hv_data) - oe.contract("bi,bj->ij", v_model, p_hv_model)
+            dbias_h = p_hv_data - p_hv_model
+        elif algorithm == "PCD":
+            dw = oe.contract("bi,bj->ij", v_data, h_data) - oe.contract("bi,bj->ij", v_model, h_model)
+            dbias_h = h_data - h_model
         dbias_v = v_data - v_model
-        dbias_h = h_data - h_model
+        
         self.Weight += learning_rate * dw / batch_size
         self.bias_v += learning_rate * np.average(dbias_v, axis = 0)
         self.bias_h += learning_rate * np.average(dbias_h, axis = 0)
